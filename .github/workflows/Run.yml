@@ -1,0 +1,36 @@
+name: Run Telegram Bot
+
+# تحديد متى يعمل السير (Workflow)
+on:
+  push:
+    branches: [ main ]  # يشتغل تلقائياً لو رفعت كود جديد على فرع main
+  workflow_dispatch:     # يضيف لك زر "Run workflow" لتشغيله يدوياً في أي وقت
+
+jobs:
+  run-telegram-bot:
+    runs-on: ubuntu-latest # تشغيل البوت على سيرفر لينكس (أوبونتو) تطلقه جيت هاب
+
+    steps:
+    # 1. سحب الكود الخاص بك من المستودع
+    - name: Checkout Repository Code
+      uses: actions/checkout@v4
+
+    # 2. إعداد بيئة بايثون على السيرفر
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11' # تحديد إصدار بايثون المناسب لـ python-telegram-bot
+
+    # 3. تثبيت المكتبات من ملف requirements.txt
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+    # 4. تشغيل البوت وحقن السيكريتس بأمان في البيئة
+    - name: Start the Bot Process
+      env:
+        BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+        ADMIN_ID: ${{ secrets.ADMIN_ID }}
+      run: |
+        python bot.py
