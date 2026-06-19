@@ -57,7 +57,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if target_user_id:
                     await context.bot.send_message(
                         chat_id=target_user_id,
-                        text=f"💬 **رد من الدعم الفني:**\n\n{message_text}"
+                        text=f"💬 **:**\n\n{message_text}"
                     )
                     await update.message.reply_text("🚀 تم إرسال ردك للمستخدم بنجاح.")
                 else:
