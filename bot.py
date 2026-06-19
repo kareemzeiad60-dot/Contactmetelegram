@@ -1,5 +1,6 @@
 import os
 import logging
+import asyncio
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -67,6 +68,13 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text("☢️ للرد، قم بعمل Reply على رسالة المستخدم.")
 
+# دالة مخصصة لإغلاق البوت بعد وقت محدد بأمان ليتيح لـ GitHub Actions إعادة تشغيله
+async def auto_shutdown(application: Application, seconds: int):
+    await asyncio.sleep(seconds)
+    print(f"⏱️ مرت {seconds} ثانية. يتم الآن إغلاق البوت لإعادة التشغيل الجدولي الآمن...")
+    await application.stop()
+    await application.shutdown()
+
 # 3. الدالة الرئيسية التي تشغل الورك فلو
 def main():
     TOKEN = os.getenv("BOT_TOKEN")
@@ -82,8 +90,14 @@ def main():
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_messages))
 
-    # أمر بدء الاستماع الفعلي للبوت
     print("🔹🔷💠⚜️ البوت بدأ العمل الآن ومستعد لاستقبال الرسائل...")
+
+    # الحصول على حلقة الأحداث (Event Loop) الحالية لتشغيل مؤقت الإغلاق الذاتي
+    loop = asyncio.get_event_loop()
+    # إغلاق تلقائي بعد ساعتين ونصف (9000 ثانية) لتفادي حد الـ 6 ساعات وجعل السيرفر يجدد نفسه
+    loop.create_task(auto_shutdown(application, 9000))
+
+    # أمر بدء الاستماع الفعلي للبوت
     application.run_polling()
 
 # نقطة انطلاق التشغيل من الـ Terminal
