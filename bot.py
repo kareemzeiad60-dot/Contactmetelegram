@@ -22,7 +22,7 @@ except ValueError:
 # 1. أمر البداية /start للمستخدمين
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "أهلاً بك في بوت التواصل! ✉️\nأرسل رسالتك هنا وسيقوم الدعم بالرد عليك مباشرة."
+        "أهلاً بك في بوت التواصل! 📬✒️\nأرسل رسالتك هنا وسيقوم الدعم بالرد عليك مباشرة."
     )
 
 # 2. إدارة وتوجيه الرسائل (الورك فلو الرئيسي)
@@ -40,7 +40,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                  f"💬 **الرسالة:**\n{message_text}",
             parse_mode="MarkdownV2"
         )
-        await update.message.reply_text("✅ تم إرسال رسالتك بنجاح، سيتم الرد عليك قريباً.")
+        await update.message.reply_text("☑️✔️ تم إرسال رسالتك بنجاح، سيتم الرد عليك قريباً.")
 
     # إذا كانت الرسالة من الآدمن -> يجب أن تكون ردًا (Reply) على رسالة مستخدم
     else:
@@ -57,15 +57,15 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if target_user_id:
                     await context.bot.send_message(
                         chat_id=target_user_id,
-                        text=f"💬 **:**\n\n{message_text}"
+                        text=f"🪽🌪️\n\n{message_text}"
                     )
-                    await update.message.reply_text("🚀 تم إرسال ردك للمستخدم بنجاح.")
+                    await update.message.reply_text("💠✴️ تم إرسال ردك للمستخدم بنجاح.")
                 else:
                     await update.message.reply_text("❌ لم أتمكن من العثور على ID المستخدم.")
             except Exception as e:
-                await update.message.reply_text(f"❌ حدث خطأ: {e}")
+                await update.message.reply_text(f"✖️ حدث خطأ: {e}")
         else:
-            await update.message.reply_text("⚠️ للرد، قم بعمل Reply على رسالة المستخدم.")
+            await update.message.reply_text("☢️ للرد، قم بعمل Reply على رسالة المستخدم.")
 
 # 3. الدالة الرئيسية التي تشغل الورك فلو
 def main():
@@ -83,7 +83,7 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_messages))
 
     # أمر بدء الاستماع الفعلي للبوت
-    print("🚀 البوت بدأ العمل الآن ومستعد لاستقبال الرسائل...")
+    print("🔹🔷💠⚜️ البوت بدأ العمل الآن ومستعد لاستقبال الرسائل...")
     application.run_polling()
 
 # نقطة انطلاق التشغيل من الـ Terminal
