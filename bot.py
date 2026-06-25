@@ -49,7 +49,6 @@ def save_user_to_db(user_id):
         response = supabase.table("users").upsert({"user_id": user_id}).execute()
         print(f"🚀 [نجاح سحابي] تم حفظ الـ ID: {user_id} بنجاح في الجدول! الاستجابة: {response.data}")
     except Exception as e:
-        # هنا سيطبع جيت هاب سبب المشكلة الحقيقي بالملي (سواء RLS أو اسم عمود خطأ)
         print(f"❌ [خطأ حرج] فشلت عملية الحفظ في الداتا بيس للمستخدم {user_id}. السبب: {e}")
 
 # 1. أمر البداية /start للمستخدمين
@@ -62,7 +61,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "أهلاً بك في بوت التواصل! ✉️📬\nأرسل رسالتك هنا وسيقوم الدعم بالرد عليك مباشرة."
     )
 
-# 2. أمر الإرسال الجماعي (للآدمن فقط) جلب البيانات من السحابة
+# 2. أمر الإرسال الجماعي (للآدمن فقط) جلب البيانات من السحابة مع فحص ذكي للاتصال
 async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     
@@ -70,15 +69,26 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"🚫 محاولة برودكاست مرفوضة من مستخدم غير مصرح له: {chat_id}")
         return
 
+    # الفحص الذكي: لو استدعيت الأمر وقاعدة البيانات غير متصلة، سيخبرك البوت بالسبب في الشات فوراً
+    if not supabase:
+        url_status = "✅ موجود وقرأه البوت" if os.getenv("SUPABASE_URL") else "❌ غير موجود أو فارغ"
+        key_status = "✅ موجود وقرأه البوت" if os.getenv("SUPABASE_KEY") else "❌ غير موجود أو فارغ"
+        
+        error_report = (
+            f"❌ **قاعدة البيانات غير متصلة حالياً!**\n\n"
+            f"🕵️‍♂️ **تقرير فحص الـ Secrets في السيرفر:**\n"
+            f"🌐 `SUPABASE_URL`: {url_status}\n"
+            f"🔑 `SUPABASE_KEY`: {key_status}\n\n"
+            f"💡 *حل المشكلة:* إذا كانت النتيجة (❌)، اذهب إلى إعدادات جيت هاب (Settings -> Secrets -> Actions) وتأكد من إضافة المتغيرات بالحروف الكبيرة وبدون مسافات، ثم أعد تشغيل البوت عبر Run workflow لتحديث السيرفر."
+        )
+        await update.message.reply_text(error_report, parse_mode="Markdown")
+        return
+
     if not context.args:
         await update.message.reply_text("⚠️ يرجى كتابة الرسالة بعد الأمر. مثال:\n`/broadcast أهلاً بالجميع`", parse_mode="Markdown")
         return
 
     broadcast_message = " ".join(context.args)
-
-    if not supabase:
-        await update.message.reply_text("❌ قاعدة البيانات غير متصلة.")
-        return
 
     # جلب كل المستخدمين من جدول سوبابيس
     try:
@@ -150,7 +160,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 await update.message.reply_text(f"✖️ حدث خطأ أثناء معالجة الرد: {e}")
         else:
-            await update.message.reply_text("☢️ للرد، قم بعمل Reply على رسالة المستخدم.")
+            await update.message.reply_text("☢️ للرد, قم بعمل Reply على رسالة المستخدم.")
 
 # دالة مخصصة لإغلاق البوت بعد وقت محدد بأمان ليتيح لـ GitHub Actions إعادة تشغيله
 async def auto_shutdown(application: Application, seconds: int):
