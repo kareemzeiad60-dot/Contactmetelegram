@@ -1,21 +1,21 @@
 import os
 import logging
 import asyncio
+from datetime import datetime
 from dotenv import load_dotenv
 from supabase import create_client, Client
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 
-# تحميل ملف .env محلياً (إذا كان موجوداً)
 load_dotenv()
 
-# تفعيل الـ Logging لمتابعة حالة البوت والأخطاء
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', 
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
+logger = logging.getLogger(__name__)
 
-# جلب بيانات السيكريتس
+# الحصول على البيانات الحساسة
 try:
     ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 except ValueError:
@@ -23,171 +23,283 @@ except ValueError:
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# اختبار طباعة أولي للتأكد من وصول السيكريتس للبوت
-print(f"📡 فحص الاتصال... URL موجود: {bool(SUPABASE_URL)} | KEY موجود: {bool(SUPABASE_KEY)}")
+print(f"📡 فحص الاتصال... URL: {bool(SUPABASE_URL)} | KEY: {bool(SUPABASE_KEY)}")
 
-# الاتصال بقاعدة بيانات Supabase
+# الاتصال بـ Supabase
+supabase: Client = None
 if SUPABASE_URL and SUPABASE_KEY:
     try:
-        supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-        print("✅ تم إنشاء اتصال كود البوت بـ Supabase بنجاح!")
-    except Exception as connection_error:
-        print(f"❌ فشل إنشاء كائن الاتصال بـ Supabase: {connection_error}")
-        supabase = None
-else:
-    print("❌ خطأ حرج: لم يتم العثور على بيانات اتصال Supabase في الـ Secrets!")
-    supabase = None
-
-# دالة لحفظ المستخدم في قاعدة البيانات السحابية بأمان مع طباعة مفصلة للخطأ
-def save_user_to_db(user_id):
-    if not supabase:
-        print(f"⚠️ تخطي الحفظ للمستخدم {user_id}: قاعدة البيانات غير متصلة (supabase=None)")
-        return
-    try:
-        print(f"⏳ محاولة حفظ/تحديث المستخدم {user_id} في جدول Supabase...")
-        response = supabase.table("users").upsert({"user_id": user_id}).execute()
-        print(f"🚀 [نجاح سحابي] تم حفظ الـ ID: {user_id} بنجاح في الجدول! الاستجابة: {response.data}")
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+        print("✅ تم الاتصال بـ Supabase بنجاح!")
     except Exception as e:
-        print(f"❌ [خطأ حرج] فشلت عملية الحفظ في الداتا بيس للمستخدم {user_id}. السبب: {e}")
+        print(f"❌ خطأ الاتصال: {e}")
+else:
+    print("❌ لم تجد بيانات Supabase!")
 
-# 1. أمر البداية /start للمستخدمين
+# ==================== دوال قاعدة البيانات ====================
+
+def save_user_to_db(user_id: int, username: str = None, full_name: str = None):
+    """حفظ أو تحديث بيانات المستخدم"""
+    if not supabase:
+        logger.warning(f"⚠️ قاعدة البيانات غير متصلة - تخطي حفظ المستخدم {user_id}")
+        return False
+    
+    try:
+        data = {
+            "user_id": user_id,
+            "username": username,
+            "full_name": full_name,
+            "last_message_at": datetime.utcnow().isoformat()
+        }
+        response = supabase.table("users").upsert(data, on_conflict="user_id").execute()
+        logger.info(f"✅ تم حفظ المستخدم {user_id}")
+        return True
+    except Exception as e:
+        logger.error(f"❌ خطأ حفظ المستخدم: {e}")
+        return False
+
+def save_message_to_db(user_id: int, message_text: str, message_type: str = "user"):
+    """حفظ سجل الرسائل"""
+    if not supabase:
+        return False
+    
+    try:
+        data = {
+            "user_id": user_id,
+            "message": message_text,
+            "message_type": message_type,  # "user" أو "admin_reply"
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        supabase.table("messages").insert(data).execute()
+        logger.info(f"💾 تم حفظ الرسالة من المستخدم {user_id}")
+        return True
+    except Exception as e:
+        logger.error(f"❌ خطأ حفظ الرسالة: {e}")
+        return False
+
+def get_user_stats():
+    """الحصول على إحصائيات المستخدمين"""
+    if not supabase:
+        return None
+    
+    try:
+        response = supabase.table("users").select("*").execute()
+        return len(response.data), response.data
+    except Exception as e:
+        logger.error(f"❌ خطأ جلب الإحصائيات: {e}")
+        return None, []
+
+# ==================== أوامر البوت ====================
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    print(f"👤 مستخدم ضغط /start، معرفه: {user_id}")
-    save_user_to_db(user_id) # حفظ في سوبابيس
+    """أمر البداية"""
+    user = update.effective_user
+    save_user_to_db(user.id, user.username, user.full_name)
+    
+    keyboard = [
+        [InlineKeyboardButton("📞 تواصل معنا", callback_data="contact")],
+        [InlineKeyboardButton("❓ الأسئلة الشائعة", callback_data="faq")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.message.reply_text(
-        "أهلاً بك في بوت التواصل! ✉️📬\nأرسل رسالتك هنا وسيقوم الدعم بالرد عليك مباشرة."
+        "🎉 أهلاً بك في بوت التواصل!\n\n"
+        "📝 يمكنك إرسال رسالتك وسيتم الرد عليك مباشرة من الدعم الفني.\n\n"
+        f"👤 اسمك: {user.full_name or 'زائر'}",
+        reply_markup=reply_markup
     )
 
-# 2. أمر الإرسال الجماعي (للآدمن فقط) جلب البيانات من السحابة مع فحص ذكي للاتصال
-async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض الإحصائيات (للآدمن فقط)"""
+    if update.effective_chat.id != ADMIN_ID:
+        await update.message.reply_text("🚫 عذراً، أنت غير مصرح!")
+        return
     
-    if chat_id != ADMIN_ID:
-        print(f"🚫 محاولة برودكاست مرفوضة من مستخدم غير مصرح له: {chat_id}")
+    count, users = get_user_stats()
+    if count is None:
+        await update.message.reply_text("❌ خطأ في الاتصال بقاعدة البيانات")
         return
+    
+    stats_text = f"""
+📊 **إحصائيات البوت:**
+👥 عدد المستخدمين: {count}
+🔌 حالة الاتصال: ✅ متصل
 
-    # الفحص الذكي: لو استدعيت الأمر وقاعدة البيانات غير متصلة، سيخبرك البوت بالسبب في الشات فوراً
+**آخر 5 مستخدمين:**
+"""
+    
+    for user in users[-5:]:
+        stats_text += f"\n• {user['full_name']} (@{user['username']})"
+    
+    await update.message.reply_text(stats_text, parse_mode="Markdown")
+
+async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إرسال رسالة جماعية (للآدمن فقط)"""
+    if update.effective_chat.id != ADMIN_ID:
+        await update.message.reply_text("🚫 غير مصرح!")
+        return
+    
     if not supabase:
-        url_status = "✅ موجود وقرأه البوت" if os.getenv("SUPABASE_URL") else "❌ غير موجود أو فارغ"
-        key_status = "✅ موجود وقرأه البوت" if os.getenv("SUPABASE_KEY") else "❌ غير موجود أو فارغ"
-        
-        error_report = (
-            f"❌ **قاعدة البيانات غير متصلة حالياً!**\n\n"
-            f"🕵️‍♂️ **تقرير فحص الـ Secrets في السيرفر:**\n"
-            f"🌐 `SUPABASE_URL`: {url_status}\n"
-            f"🔑 `SUPABASE_KEY`: {key_status}\n\n"
-            f"💡 *حل المشكلة:* إذا كانت النتيجة (❌)، اذهب إلى إعدادات جيت هاب (Settings -> Secrets -> Actions) وتأكد من إضافة المتغيرات بالحروف الكبيرة وبدون مسافات، ثم أعد تشغيل البوت عبر Run workflow لتحديث السيرفر."
-        )
-        await update.message.reply_text(error_report, parse_mode="Markdown")
+        await update.message.reply_text("❌ قاعدة البيانات غير متصلة!")
         return
-
+    
     if not context.args:
-        await update.message.reply_text("⚠️ يرجى كتابة الرسالة بعد الأمر. مثال:\n`/broadcast أهلاً بالجميع`", parse_mode="Markdown")
+        await update.message.reply_text(
+            "⚠️ استخدم: `/broadcast الرسالة هنا`",
+            parse_mode="Markdown"
+        )
         return
-
+    
     broadcast_message = " ".join(context.args)
-
-    # جلب كل المستخدمين من جدول سوبابيس
+    
     try:
         response = supabase.table("users").select("user_id").execute()
         user_rows = response.data
     except Exception as e:
-        await update.message.reply_text(f"❌ فشل جلب المستخدمين من السحابة: {e}")
+        await update.message.reply_text(f"❌ خطأ: {e}")
         return
-
+    
     if not user_rows:
-        await update.message.reply_text("❌ لا يوجد مستخدمين مسجلين في قاعدة البيانات حالياً.")
+        await update.message.reply_text("❌ لا يوجد مستخدمين!")
         return
-
-    await update.message.reply_text(f"📢 جاري بدء الإرسال الجماعي السحابي إلى {len(user_rows)} مستخدم...")
-
-    success_count = 0
+    
+    success = 0
     for row in user_rows:
-        u_id = row["user_id"]
         try:
-            if int(u_id) == ADMIN_ID:
-                continue
-            await context.bot.send_message(chat_id=int(u_id), text=broadcast_message)
-            success_count += 1
-            await asyncio.sleep(0.05) # حماية من الحظر
-        except Exception as send_err:
-            print(f"⚠️ تعذر الإرسال للمعرف {u_id}: {send_err}")
-            continue
+            u_id = int(row["user_id"])
+            if u_id != ADMIN_ID:
+                await context.bot.send_message(
+                    chat_id=u_id,
+                    text=f"📢 **رسالة مهمة:**\n\n{broadcast_message}",
+                    parse_mode="Markdown"
+                )
+                success += 1
+            await asyncio.sleep(0.02)
+        except Exception as e:
+            logger.warning(f"⚠️ فشل الإرسال للمستخدم {row['user_id']}: {e}")
+    
+    await update.message.reply_text(f"✅ تم الإرسال إلى {success} مستخدم")
 
-    await update.message.reply_text(f"✅ تم إرسال الرسالة الجماعية بنجاح إلى {success_count} مستخدم.")
+async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة أزرار المحادثة"""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "contact":
+        await query.edit_message_text(
+            text="📞 يمكنك إرسال رسالتك الآن:\n\n"
+                 "اكتب أي استفسار أو شكوى وسيتم التعامل معها في أسرع وقت!"
+        )
+    elif query.data == "faq":
+        await query.edit_message_text(
+            text="❓ الأسئلة الشائعة:\n\n"
+                 "🔹 متى سيتم الرد؟\n"
+                 "الرد خلال 24 ساعة\n\n"
+                 "🔹 كيف أتابع حالة طلبي؟\n"
+                 "احفظ معرف رسالتك في البوت"
+        )
 
-# 3. إدارة وتوجيه الرسائل (الورك فلو الرئيسي)
 async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    chat_id = update.effective_chat.id
+    """معالجة الرسائل الواردة"""
+    user = update.effective_user
     message_text = update.message.text
-
-    print(f"📩 رسالة واردة من الشات: {chat_id} | نصها: {message_text}")
-    save_user_to_db(user_id) # حفظ في سوبابيس عند إرسال أي رسالة
-
+    chat_id = update.effective_chat.id
+    
+    # حفظ بيانات المستخدم والرسالة
+    save_user_to_db(user.id, user.username, user.full_name)
+    save_message_to_db(user.id, message_text, "user")
+    
     if chat_id != ADMIN_ID:
+        # إرسال الرسالة للآدمن
         await context.bot.send_message(
             chat_id=ADMIN_ID,
-            text=f"📩 **رسالة جديدة من:** {update.effective_user.mention_markdown_v2()}\n"
-                 f"🆔 **ID المستخدم:** `{user_id}`\n\n"
-                 f"🔻🔻\n{message_text}",
+            text=f"📩 **رسالة جديدة** من {user.mention_markdown_v2()}\n"
+                 f"🆔 ID: `{user.id}`\n"
+                 f"👤 Username: @{user.username or 'لا يوجد'}\n\n"
+                 f"━━━━━━━━━━━━━━━━\n{message_text}",
             parse_mode="MarkdownV2"
         )
-        await update.message.reply_text("💌 تم إرسال رسالتك بنجاح، سيتم الرد عليك قريباً.")
-
-    else:
+        
+        await update.message.reply_text(
+            "✅ شكراً! تم استقبال رسالتك\n"
+            "⏳ سيتم الرد عليك قريباً"
+        )
+    
+    else:  # الآدمن يرسل رسالة
         if update.message.reply_to_message:
+            # محاولة استخراج ID المستخدم من الرسالة الأصلية
             original_text = update.message.reply_to_message.text
             try:
-                lines = original_text.split("\n")
-                target_user_id = None
-                for line in lines:
-                    if "ID المستخدم:" in line:
-                        target_user_id = int(line.split(":")[1].strip())
-                        break
-                
-                if target_user_id:
-                    await context.bot.send_message(
-                        chat_id=target_user_id,
-                        text=f"🌪️\n\n{message_text}"
-                    )
-                    await update.message.reply_text("🔹🔷💠🌐 تم إرسال ردك للمستخدم بنجاح.")
-                else:
-                    await update.message.reply_text("❌ لم أتمكن من العثور على ID المستخدم في الرسالة الأصلية.")
+                # البحث عن ID في النص
+                for line in original_text.split("\n"):
+                    if "ID:" in line:
+                        target_id = int(line.split("`")[1])
+                        await context.bot.send_message(
+                            chat_id=target_id,
+                            text=f"💬 **رد من الدعم:**\n\n{message_text}",
+                            parse_mode="Markdown"
+                        )
+                        save_message_to_db(target_id, message_text, "admin_reply")
+                        await update.message.reply_text("✅ تم إرسال الرد")
+                        return
             except Exception as e:
-                await update.message.reply_text(f"✖️ حدث خطأ أثناء معالجة الرد: {e}")
+                logger.error(f"خطأ في استخراج ID: {e}")
+            
+            await update.message.reply_text("❌ لم أتمكن من معالجة الرد")
         else:
-            await update.message.reply_text("☢️ للرد, قم بعمل Reply على رسالة المستخدم.")
+            await update.message.reply_text("⚠️ قم برد (Reply) على رسالة المستخدم!")
 
-# دالة مخصصة لإغلاق البوت بعد وقت محدد بأمان ليتيح لـ GitHub Actions إعادة تشغيله
-async def auto_shutdown(application: Application, seconds: int):
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """أمر المساعدة"""
+    help_text = """
+🤖 **أوامر البوت:**
+
+*للمستخدمين:*
+/start - بدء البوت
+/help - هذه الرسالة
+
+*للآدمن فقط:*
+/stats - إحصائيات المستخدمين
+/broadcast `رسالة` - إرسال رسالة جماعية
+"""
+    await update.message.reply_text(help_text, parse_mode="Markdown")
+
+async def auto_shutdown(application: Application, seconds: int = 9000):
+    """إغلاق البوت تلقائياً بعد فترة زمنية"""
     await asyncio.sleep(seconds)
-    print(f"⏱️ مرت {seconds} ثانية. يتم الآن إغلاق البوت لإعادة التشغيل الجدولي الآمن...")
+    logger.info(f"⏱️ إيقاف البوت بعد {seconds} ثانية...")
     await application.stop()
     await application.shutdown()
 
-# 4. الدالة الرئيسية
+# ==================== البرنامج الرئيسي ====================
+
 def main():
-    TOKEN = os.getenv("BOT_TOKEN")
-    
-    if not TOKEN or ADMIN_ID == 0:
-        print(f"❌ خطأ حرج: لم يتم العثور على BOT_TOKEN (موجود: {bool(TOKEN)}) أو ADMIN_ID (موجود: {ADMIN_ID != 0})!")
+    if not BOT_TOKEN:
+        print("❌ خطأ: BOT_TOKEN غير موجود!")
         return
-
-    application = Application.builder().token(TOKEN).build()
-
+    
+    if ADMIN_ID == 0:
+        print("❌ خطأ: ADMIN_ID غير صحيح!")
+        return
+    
+    application = Application.builder().token(BOT_TOKEN).build()
+    
+    # إضافة المعالجات
     application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("stats", stats_command))
     application.add_handler(CommandHandler("broadcast", broadcast_command))
+    application.add_handler(CallbackQueryHandler(button_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_messages))
-
-    print("🔹🔷💠⚜️ البوت يعمل الآن بكفاءة ومستعد لاستقبال الأحداث...")
-
+    
+    logger.info("🚀 البوت يعمل الآن...")
+    
+    # إغلاق تلقائي بعد 150 دقيقة (للـ GitHub Actions)
     loop = asyncio.get_event_loop()
     loop.create_task(auto_shutdown(application, 9000))
-
+    
     application.run_polling()
 
 if __name__ == '__main__':
