@@ -18,7 +18,7 @@ jobs:
 
     steps:
     - name: Checkout Repository Code
-      uses: actions/code@v4
+      uses: actions/checkout@v4
 
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -34,7 +34,7 @@ jobs:
       env:
         BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
         ADMIN_ID: ${{ secrets.ADMIN_ID }}
-        # 🚀 تم إضافة السيكريتس الخاصة بقاعدة البيانات هنا ليراها الكود
+        # 🚀 الربط السحري الصحيح هنا:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
       run: |
