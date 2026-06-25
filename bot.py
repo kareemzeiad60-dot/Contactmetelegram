@@ -2,6 +2,7 @@ import os
 import logging
 import asyncio
 from dotenv import load_dotenv
+from supabase import create_client, Client
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
@@ -14,25 +15,94 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-# جلب معرف الآدمن وتحويله لرقم
+# جلب بيانات السيكريتس
 try:
     ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 except ValueError:
     ADMIN_ID = 0
 
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+# الاتصال بقاعدة بيانات Supabase
+if SUPABASE_URL and SUPABASE_KEY:
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+else:
+    print("❌ خطأ: لم يتم العثور على بيانات اتصال Supabase!")
+    supabase = None
+
+# دالة لحفظ المستخدم في قاعدة البيانات السحابية بأمان
+def save_user_to_db(user_id):
+    if not supabase:
+        return
+    try:
+        # محاولة إدخال الـ ID، وإذا كان موجوداً مسبقاً فلن يفعل شيئاً (تجنب التكرار)
+        supabase.table("users").upsert({"user_id": user_id}).execute()
+    except Exception as e:
+        print(f"⚠️ خطأ أثناء حفظ المستخدم في قاعدة البيانات: {e}")
+
 # 1. أمر البداية /start للمستخدمين
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    save_user_to_db(user_id) # حفظ في سوبابيس
+    
     await update.message.reply_text(
         "أهلاً بك في بوت التواصل! ✉️📬\nأرسل رسالتك هنا وسيقوم الدعم بالرد عليك مباشرة."
     )
 
-# 2. إدارة وتوجيه الرسائل (الورك فلو الرئيسي)
+# 2. أمر الإرسال الجماعي (للآدمن فقط) جلب البيانات من السحابة
+async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    
+    if chat_id != ADMIN_ID:
+        return
+
+    if not context.args:
+        await update.message.reply_text("⚠️ يرجى كتابة الرسالة بعد الأمر. مثال:\n`/broadcast أهلاً بالجميع`", parse_mode="Markdown")
+        return
+
+    broadcast_message = " ".join(context.args)
+
+    if not supabase:
+        await update.message.reply_text("❌ قاعدة البيانات غير متصلة.")
+        return
+
+    # جلب كل المستخدمين من جدول سوبابيس
+    try:
+        response = supabase.table("users").select("user_id").execute()
+        user_rows = response.data
+    except Exception as e:
+        await update.message.reply_text(f"❌ فشل جلب المستخدمين: {e}")
+        return
+
+    if not user_rows:
+        await update.message.reply_text("❌ لا يوجد مستخدمين مسجلين في قاعدة البيانات حالياً.")
+        return
+
+    await update.message.reply_text(f"📢 جاري بدء الإرسال الجماعي السحابي إلى {len(user_rows)} مستخدم...")
+
+    success_count = 0
+    for row in user_rows:
+        u_id = row["user_id"]
+        try:
+            if int(u_id) == ADMIN_ID:
+                continue
+            await context.bot.send_message(chat_id=int(u_id), text=broadcast_message)
+            success_count += 1
+            await asyncio.sleep(0.05) # حماية من الحظر
+        except Exception:
+            continue
+
+    await update.message.reply_text(f"✅ تم إرسال الرسالة الجماعية بنجاح إلى {success_count} مستخدم.")
+
+# 3. إدارة وتوجيه الرسائل (الورك فلو الرئيسي)
 async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
     message_text = update.message.text
 
-    # إذا كانت الرسالة من مستخدم عادي -> تُحوّل للآدمن
+    save_user_to_db(user_id) # حفظ في سوبابيس عند إرسال أي رسالة
+
     if chat_id != ADMIN_ID:
         await context.bot.send_message(
             chat_id=ADMIN_ID,
@@ -43,7 +113,6 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await update.message.reply_text("💌 تم إرسال رسالتك بنجاح، سيتم الرد عليك قريباً.")
 
-    # إذا كانت الرسالة من الآدمن -> يجب أن تكون ردًا (Reply) على رسالة مستخدم
     else:
         if update.message.reply_to_message:
             original_text = update.message.reply_to_message.text
@@ -75,31 +144,26 @@ async def auto_shutdown(application: Application, seconds: int):
     await application.stop()
     await application.shutdown()
 
-# 3. الدالة الرئيسية التي تشغل الورك فلو
+# 4. الدالة الرئيسية
 def main():
     TOKEN = os.getenv("BOT_TOKEN")
     
     if not TOKEN or ADMIN_ID == 0:
-        print("❌ خطأ حرج: لم يتم العثور على BOT_TOKEN أو ADMIN_ID في متغيرات البيئة!")
+        print("❌ خطأ حرج: لم يتم العثور على BOT_TOKEN أو ADMIN_ID!")
         return
 
-    # بناء تطبيق التليجرام
     application = Application.builder().token(TOKEN).build()
 
-    # تسجيل الأوامر والمعالجات
     application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("broadcast", broadcast_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_messages))
 
-    print("🔹🔷💠⚜️ البوت بدأ العمل الآن ومستعد لاستقبال الرسائل...")
+    print("🔹🔷💠⚜️ البوت يعمل الآن بكفاءة مع قاعدة بيانات سحابية...")
 
-    # الحصول على حلقة الأحداث (Event Loop) الحالية لتشغيل مؤقت الإغلاق الذاتي
     loop = asyncio.get_event_loop()
-    # إغلاق تلقائي بعد ساعتين ونصف (9000 ثانية) لتفادي حد الـ 6 ساعات وجعل السيرفر يجدد نفسه
     loop.create_task(auto_shutdown(application, 9000))
 
-    # أمر بدء الاستماع الفعلي للبوت
     application.run_polling()
 
-# نقطة انطلاق التشغيل من الـ Terminal
 if __name__ == '__main__':
     main()
