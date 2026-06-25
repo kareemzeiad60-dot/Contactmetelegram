@@ -24,26 +24,38 @@ except ValueError:
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
+# اختبار طباعة أولي للتأكد من وصول السيكريتس للبوت
+print(f"📡 فحص الاتصال... URL موجود: {bool(SUPABASE_URL)} | KEY موجود: {bool(SUPABASE_KEY)}")
+
 # الاتصال بقاعدة بيانات Supabase
 if SUPABASE_URL and SUPABASE_KEY:
-    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    try:
+        supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        print("✅ تم إنشاء اتصال كود البوت بـ Supabase بنجاح!")
+    except Exception as connection_error:
+        print(f"❌ فشل إنشاء كائن الاتصال بـ Supabase: {connection_error}")
+        supabase = None
 else:
-    print("❌ خطأ: لم يتم العثور على بيانات اتصال Supabase!")
+    print("❌ خطأ حرج: لم يتم العثور على بيانات اتصال Supabase في الـ Secrets!")
     supabase = None
 
-# دالة لحفظ المستخدم في قاعدة البيانات السحابية بأمان
+# دالة لحفظ المستخدم في قاعدة البيانات السحابية بأمان مع طباعة مفصلة للخطأ
 def save_user_to_db(user_id):
     if not supabase:
+        print(f"⚠️ تخطي الحفظ للمستخدم {user_id}: قاعدة البيانات غير متصلة (supabase=None)")
         return
     try:
-        # محاولة إدخال الـ ID، وإذا كان موجوداً مسبقاً فلن يفعل شيئاً (تجنب التكرار)
-        supabase.table("users").upsert({"user_id": user_id}).execute()
+        print(f"⏳ محاولة حفظ/تحديث المستخدم {user_id} في جدول Supabase...")
+        response = supabase.table("users").upsert({"user_id": user_id}).execute()
+        print(f"🚀 [نجاح سحابي] تم حفظ الـ ID: {user_id} بنجاح في الجدول! الاستجابة: {response.data}")
     except Exception as e:
-        print(f"⚠️ خطأ أثناء حفظ المستخدم في قاعدة البيانات: {e}")
+        # هنا سيطبع جيت هاب سبب المشكلة الحقيقي بالملي (سواء RLS أو اسم عمود خطأ)
+        print(f"❌ [خطأ حرج] فشلت عملية الحفظ في الداتا بيس للمستخدم {user_id}. السبب: {e}")
 
 # 1. أمر البداية /start للمستخدمين
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    print(f"👤 مستخدم ضغط /start، معرفه: {user_id}")
     save_user_to_db(user_id) # حفظ في سوبابيس
     
     await update.message.reply_text(
@@ -55,6 +67,7 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     
     if chat_id != ADMIN_ID:
+        print(f"🚫 محاولة برودكاست مرفوضة من مستخدم غير مصرح له: {chat_id}")
         return
 
     if not context.args:
@@ -72,7 +85,7 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         response = supabase.table("users").select("user_id").execute()
         user_rows = response.data
     except Exception as e:
-        await update.message.reply_text(f"❌ فشل جلب المستخدمين: {e}")
+        await update.message.reply_text(f"❌ فشل جلب المستخدمين من السحابة: {e}")
         return
 
     if not user_rows:
@@ -90,7 +103,8 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id=int(u_id), text=broadcast_message)
             success_count += 1
             await asyncio.sleep(0.05) # حماية من الحظر
-        except Exception:
+        except Exception as send_err:
+            print(f"⚠️ تعذر الإرسال للمعرف {u_id}: {send_err}")
             continue
 
     await update.message.reply_text(f"✅ تم إرسال الرسالة الجماعية بنجاح إلى {success_count} مستخدم.")
@@ -101,6 +115,7 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     message_text = update.message.text
 
+    print(f"📩 رسالة واردة من الشات: {chat_id} | نصها: {message_text}")
     save_user_to_db(user_id) # حفظ في سوبابيس عند إرسال أي رسالة
 
     if chat_id != ADMIN_ID:
@@ -131,9 +146,9 @@ async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                     await update.message.reply_text("🔹🔷💠🌐 تم إرسال ردك للمستخدم بنجاح.")
                 else:
-                    await update.message.reply_text("❌ لم أتمكن من العثور على ID المستخدم.")
+                    await update.message.reply_text("❌ لم أتمكن من العثور على ID المستخدم في الرسالة الأصلية.")
             except Exception as e:
-                await update.message.reply_text(f"✖️ حدث خطأ: {e}")
+                await update.message.reply_text(f"✖️ حدث خطأ أثناء معالجة الرد: {e}")
         else:
             await update.message.reply_text("☢️ للرد، قم بعمل Reply على رسالة المستخدم.")
 
@@ -149,7 +164,7 @@ def main():
     TOKEN = os.getenv("BOT_TOKEN")
     
     if not TOKEN or ADMIN_ID == 0:
-        print("❌ خطأ حرج: لم يتم العثور على BOT_TOKEN أو ADMIN_ID!")
+        print(f"❌ خطأ حرج: لم يتم العثور على BOT_TOKEN (موجود: {bool(TOKEN)}) أو ADMIN_ID (موجود: {ADMIN_ID != 0})!")
         return
 
     application = Application.builder().token(TOKEN).build()
@@ -158,7 +173,7 @@ def main():
     application.add_handler(CommandHandler("broadcast", broadcast_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_messages))
 
-    print("🔹🔷💠⚜️ البوت يعمل الآن بكفاءة مع قاعدة بيانات سحابية...")
+    print("🔹🔷💠⚜️ البوت يعمل الآن بكفاءة ومستعد لاستقبال الأحداث...")
 
     loop = asyncio.get_event_loop()
     loop.create_task(auto_shutdown(application, 9000))
