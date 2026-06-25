@@ -1,41 +1,43 @@
-name: Run Telegram Bot
+name: 🤖 تشغيل بوت التليجرام
 
+# عند push إلى main أو جدولة يومية
 on:
   push:
     branches: [ main ]
-  workflow_dispatch:
-  # 🕒 إضافة الجدولة الزمنية: يشتغل تلقائياً كل 3 ساعات
   schedule:
-    - cron: '0 */3 * * *'
+    # شغل البوت كل يوم في الساعة 9 صباحاً (UTC)
+    - cron: '0 9 * * *'
+  workflow_dispatch:  # تشغيل يدوي من Actions tab
 
 jobs:
-  run-telegram-bot:
+  run-bot:
     runs-on: ubuntu-latest
-    # منع تشغيل نسختين من البوت في نفس الوقت لو تداخلت المواعيد
-    concurrency:
-      group: telegram-bot
-      cancel-in-progress: true
+    timeout-minutes: 160  # 2.5 ساعة
 
     steps:
-    - name: Checkout Repository Code
-      uses: actions/checkout@v4
+      - name: 📥 استقبال كود المستودع
+        uses: actions/checkout@v3
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
+      - name: 🐍 إعداد Python 3.11
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
 
-    - name: Install Dependencies
-      run: |
-        python -m pip install --upgrade pip
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+      - name: 📦 تثبيت المكتبات المطلوبة
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-    - name: Start the Bot Process
-      env:
-        BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-        ADMIN_ID: ${{ secrets.ADMIN_ID }}
-        # 🚀 الربط السحري الصحيح هنا:
-        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-        SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-      run: |
-        python bot.py
+      - name: 🚀 تشغيل بوت التليجرام
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          ADMIN_ID: ${{ secrets.ADMIN_ID }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          echo "🤖 البوت يعمل الآن..."
+          python bot.py
+
+      - name: ✅ انتهى التشغيل
+        if: always()
+        run: echo "البوت انتهى من العمل بعد 2.5 ساعة كما هو مخطط"
